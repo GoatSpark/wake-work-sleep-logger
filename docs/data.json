@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-17T22:55:04.670718",
+  "generated_at": "2026-08-17T22:56:00.441935",
   "timezone": "America/Los_Angeles",
   "categories": [
     "wake",
@@ -7,5 +7,41 @@
     "leave_work",
     "sleep"
   ],
-  "days": []
+  "days": [
+    {
+      "date": "2026-08-13",
+      "wake": 435,
+      "arrive_work": 525,
+      "leave_work": 1050,
+      "sleep": 1400
+    },
+    {
+      "date": "2026-08-14",
+      "wake": 435,
+      "arrive_work": 525,
+      "leave_work": 1050,
+      "sleep": 1400
+    },
+    {
+      "date": "2026-08-15",
+      "wake": 435,
+      "arrive_work": 525,
+      "leave_work": 1050,
+      "sleep": 1400
+    },
+    {
+      "date": "2026-08-16",
+      "wake": 435,
+      "arrive_work": 525,
+      "leave_work": 1050,
+      "sleep": 1400
+    },
+    {
+      "date": "2026-08-17",
+      "wake": 435,
+      "arrive_work": 525,
+      "leave_work": 1050,
+      "sleep": 1400
+    }
+  ]
 }
