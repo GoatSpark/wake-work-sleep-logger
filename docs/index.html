@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wake · Work · Sleep</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --text: #1a1b1f;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent-wake: #d97706;
+    --accent-arrive: #2563eb;
+    --accent-leave: #7c3aed;
+    --accent-sleep: #4338ca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1013;
+      --panel: #191c22;
+      --text: #e9eaed;
+      --muted: #9aa1ac;
+      --border: #2b2f38;
+      --accent-wake: #fbbf24;
+      --accent-arrive: #60a5fa;
+      --accent-leave: #a78bfa;
+      --accent-sleep: #818cf8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 64px; }
+  header h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  header .meta { color: var(--muted); font-size: 0.85rem; margin: 0 0 24px; }
+
+  .tabs {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px;
+    gap: 2px;
+    margin-bottom: 24px;
+  }
+  .tabs button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.88rem;
+    padding: 7px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .tabs button.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    border-top: 3px solid var(--accent, var(--muted));
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .card .icon { font-size: 1rem; }
+  .card .avg { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; }
+  .card .range-line { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
+  .card .dash { margin: 0 4px; }
+  .card .count { color: var(--muted); font-size: 0.75rem; margin-top: 8px; }
+  .card .no-data { color: var(--muted); font-size: 0.85rem; margin: 8px 0 0; }
+
+  .charts { display: flex; flex-direction: column; gap: 14px; }
+  .chart-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .chart-title {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chart-svg { width: 100%; height: 180px; display: block; overflow: visible; }
+  .grid { stroke: var(--border); stroke-width: 1; }
+  .axis-label { fill: var(--muted); font-size: 9px; font-family: inherit; }
+  .chart-empty { color: var(--muted); font-size: 0.85rem; padding: 20px 0; }
+
+  .empty { color: var(--muted); text-align: center; padding: 60px 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Wake · Work · Sleep</h1>
+      <p class="meta" id="meta"></p>
+    </header>
+
+    <div class="tabs" id="tabs">
+      <button data-range="week" class="active">Week</button>
+      <button data-range="month">Month</button>
+      <button data-range="quarter">Quarter</button>
+      <button data-range="year">Year</button>
+      <button data-range="all">All</button>
+    </div>
+
+    <div class="cards" id="cards"></div>
+    <div class="charts" id="charts"></div>
+    <p class="empty" id="empty" hidden>No data logged yet &mdash; message the bot to get started.</p>
+  </div>
+
+<script>
+const CATEGORY_META = {
+  wake:        { label: "Wake up",         icon: "\u{1F305}", color: "var(--accent-wake)" },
+  arrive_work: { label: "Arrive at work",  icon: "\u{1F3E2}", color: "var(--accent-arrive)" },
+  leave_work:  { label: "Leave work",      icon: "\u{1F6AA}", color: "var(--accent-leave)" },
+  sleep:       { label: "Bedtime",         icon: "\u{1F319}", color: "var(--accent-sleep)" },
+};
+const WRAP_MIDNIGHT = new Set(["sleep"]);
+const RANGE_DAYS = { week: 7, month: 30, quarter: 90, year: 365 };
+
+let DATA = null;
+let currentRange = "week";
+
+function formatMinutes(m) {
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  const h = Math.floor(m / 60), mm = m % 60;
+  const period = h < 12 ? "AM" : "PM";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${String(mm).padStart(2, "0")} ${period}`;
+}
+
+function formatHourLabel(m) {
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  const h = Math.floor(m / 60);
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}${h < 12 ? "a" : "p"}`;
+}
+
+function addDaysToIso(isoDate, delta) {
+  const d = new Date(isoDate + "T00:00:00");
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function filteredDays(rangeName) {
+  const days = DATA.days;
+  if (!days.length) return [];
+  if (rangeName === "all") return days;
+  const n = RANGE_DAYS[rangeName];
+  const latest = days[days.length - 1].date;
+  const since = addDaysToIso(latest, -(n - 1));
+  return days.filter(d => d.date >= since);
+}
+
+function categoryStats(days, category) {
+  let minutes = days.filter(d => d[category] !== undefined).map(d => d[category]);
+  if (!minutes.length) return null;
+  if (WRAP_MIDNIGHT.has(category)) {
+    minutes = minutes.map(m => (m < 720 ? m + 1440 : m));
+  }
+  const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+  return {
+    count: minutes.length,
+    average: formatMinutes(avg),
+    earliest: formatMinutes(Math.min(...minutes)),
+    latest: formatMinutes(Math.max(...minutes)),
+  };
+}
+
+function renderCards(days) {
+  const cardsEl = document.getElementById("cards");
+  cardsEl.innerHTML = Object.entries(CATEGORY_META).map(([cat, meta]) => {
+    const stats = categoryStats(days, cat);
+    if (!stats) {
+      return `<div class="card" style="--accent:${meta.color}">
+        <div class="card-head"><span class="icon">${meta.icon}</span><span>${meta.label}</span></div>
+        <p class="no-data">No data in this range</p>
+      </div>`;
+    }
+    return `<div class="card" style="--accent:${meta.color}">
+      <div class="card-head"><span class="icon">${meta.icon}</span><span>${meta.label}</span></div>
+      <div class="avg">${stats.average}</div>
+      <div class="range-line"><span>${stats.earliest}</span><span class="dash">&ndash;</span><span>${stats.latest}</span></div>
+      <div class="count">${stats.count} day${stats.count === 1 ? "" : "s"} logged</div>
+    </div>`;
+  }).join("");
+}
+
+function renderChart(days, category, meta) {
+  const points = days
+    .filter(d => d[category] !== undefined)
+    .map(d => {
+      let m = d[category];
+      if (WRAP_MIDNIGHT.has(category) && m < 720) m += 1440;
+      return { date: d.date, minutes: m };
+    });
+
+  const width = 640, height = 180, padL = 40, padR = 12, padT = 12, padB = 10;
+  let body;
+
+  if (points.length < 2) {
+    body = `<div class="chart-empty">Not enough data yet for a trend line</div>`;
+  } else {
+    const minM = Math.min(...points.map(p => p.minutes));
+    const maxM = Math.max(...points.map(p => p.minutes));
+    const pad = Math.max(30, (maxM - minM) * 0.2);
+    const yMin = minM - pad, yMax = maxM + pad;
+
+    const x = i => padL + (i / (points.length - 1)) * (width - padL - padR);
+    const y = m => padT + (1 - (m - yMin) / (yMax - yMin)) * (height - padT - padB);
+
+    const linePath = points
+      .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.minutes).toFixed(1)}`)
+      .join(" ");
+
+    const gridlines = [];
+    const hourStart = Math.ceil(yMin / 60) * 60;
+    for (let m = hourStart; m <= yMax; m += 60) {
+      const gy = y(m).toFixed(1);
+      gridlines.push(`<line x1="${padL}" x2="${width - padR}" y1="${gy}" y2="${gy}" class="grid" />`);
+      gridlines.push(`<text x="${padL - 6}" y="${(y(m) + 3).toFixed(1)}" class="axis-label" text-anchor="end">${formatHourLabel(m)}</text>`);
+    }
+
+    const dots = points
+      .map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.minutes).toFixed(1)}" r="2.5" fill="${meta.color}"><title>${p.date} ${formatMinutes(p.minutes)}</title></circle>`)
+      .join("");
+
+    body = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="chart-svg">
+      ${gridlines.join("")}
+      <path d="${linePath}" fill="none" stroke="${meta.color}" stroke-width="2" />
+      ${dots}
+    </svg>`;
+  }
+
+  return `<div class="chart-card">
+    <div class="chart-title"><span class="icon">${meta.icon}</span> ${meta.label} trend</div>
+    ${body}
+  </div>`;
+}
+
+function render() {
+  const metaEl = document.getElementById("meta");
+  metaEl.textContent = DATA.generated_at
+    ? `Updated ${new Date(DATA.generated_at).toLocaleString()} · ${DATA.timezone}`
+    : "";
+
+  const emptyEl = document.getElementById("empty");
+  if (!DATA.days.length) {
+    emptyEl.hidden = false;
+    document.getElementById("cards").innerHTML = "";
+    document.getElementById("charts").innerHTML = "";
+    return;
+  }
+  emptyEl.hidden = true;
+
+  const days = filteredDays(currentRange);
+  renderCards(days);
+  document.getElementById("charts").innerHTML = Object.entries(CATEGORY_META)
+    .map(([cat, meta]) => renderChart(days, cat, meta))
+    .join("");
+}
+
+document.getElementById("tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-range]");
+  if (!btn) return;
+  currentRange = btn.dataset.range;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b === btn));
+  render();
+});
+
+fetch("data.json", { cache: "no-store" })
+  .then(res => res.json())
+  .then(data => { DATA = data; render(); })
+  .catch(() => {
+    document.getElementById("meta").textContent = "Could not load data.json yet.";
+    document.getElementById("empty").hidden = false;
+  });
+</script>
+</body>
+</html>

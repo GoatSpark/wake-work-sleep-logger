@@ -1,0 +1,7 @@
+python-telegram-bot==22.8
+sqlalchemy==2.0.52
+pytz==2024.1
+python-dotenv==1.0.0
+
+# Testing
+pytest==8.3.3
