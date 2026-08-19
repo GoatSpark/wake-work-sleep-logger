@@ -1,11 +1,13 @@
 # Wake/Work/Sleep Logger — Project Steering File
 
 A personal Telegram bot that logs four daily life events - waking up,
-arriving at work, leaving work, going to bed - by matching free-text
-messages against fixed phrase lists, and a static GitHub Pages dashboard
-showing trends/averages over week/month/quarter/year. Single user,
-SQLite-backed, runs as a long-lived polling process (`python main.py`), same
-overall shape as the sibling [[chores-assistant]] project.
+arriving at work, leaving work, going to bed - either in real time (fixed
+exact phrases) or backfilled after the fact (free-text with an explicit
+time, e.g. "I arrived to work at 9:00 AM yesterday") - plus a static GitHub
+Pages dashboard showing trends/averages over week/month/quarter/year.
+Single user, SQLite-backed, runs as a long-lived polling process
+(`python main.py`), same overall shape as the sibling [[chores-assistant]]
+project.
 
 ## Architecture
 
@@ -14,7 +16,7 @@ main.py                 Entry point. Builds the python-telegram-bot Application,
                          registers handlers, runs polling.
 config.py                Env var loading (.env via python-dotenv) + Config.now()
 database.py              SQLAlchemy Event model + backup_database()
-message_parser.py        Normalizes + classifies free text into one of the 4 categories
+message_parser.py        Exact-phrase instant classification + free-text backfill parsing
 telegram_handler.py      /start, /help, /stats, and free-text message handling
 stats.py                 Per-day aggregation + avg/min/max stats over a date range
 export_stats.py          Dumps docs/data.json for the GitHub Pages dashboard
@@ -24,22 +26,47 @@ scripts/manual_smoke_test.py  Sends a real Telegram message via the live bot for
 tests/                   pytest suite, isolated in-memory DB (conftest.py fixture)
 ```
 
-Message flow: an incoming Telegram text message -> `message_parser.categorize`
-(exact match after lowercasing/stripping punctuation against the phrase
-lists below) -> if recognized, `Event(category, timestamp=Config.now())` is
-inserted and the bot replies with a confirmation; if unrecognized, the bot
-asks the user to check `/help` rather than silently dropping the message.
+Message flow, in `telegram_handler.handle_message`: an incoming text message
+is tried against **two parsers in order**, and the first one that succeeds
+wins:
 
-Recognized phrases (see `message_parser.CATEGORY_PHRASES` - update both
-places if these ever change):
+1. `message_parser.categorize` - exact match (after lowercasing/stripping
+   punctuation) against a fixed phrase list, logged with `timestamp =
+   Config.now()`. This is the real-time "log it right now" path.
+2. `message_parser.parse_backfill` - only tried if (1) didn't match. Uses
+   keyword/regex heuristics instead of an exact list (backfilled phrasing
+   can't be enumerated the way instant phrases can), and only fires if the
+   message contains an **explicit clock time** - that's the signal that
+   distinguishes "log this for a specific past/other time" from "I said
+   something I didn't mean as a log entry". Resolves "yesterday"/"last
+   night" to the previous calendar day, everything else (including no day
+   word at all) to today.
+
+If neither matches, the bot asks the user to check `/help` rather than
+silently dropping the message.
+
+Recognized instant phrases (see `message_parser.CATEGORY_PHRASES` - update
+both places if these ever change):
 - **wake**: Goodmorning, Awake, I'm awake
 - **arrive_work**: At work, Arrived at work, Arrived
 - **leave_work**: Leaving, Left, Leaving work, Left work, Goodbye, Bye work
 - **sleep**: Goodnight, Bedtime, Going to sleep, Sleeping
 
-Matching is exact (post-normalization), not substring/fuzzy - deliberately,
-so "leftovers" doesn't get misread as "left". If the phrase list grows,
-prefer adding new exact phrases over loosening the match to substring.
+Instant-phrase matching is exact (post-normalization), not substring/fuzzy -
+deliberately, so "leftovers" doesn't get misread as "left". If the phrase
+list grows, prefer adding new exact phrases over loosening the match to
+substring.
+
+Backfill category keywords (see `message_parser._BACKFILL_CATEGORY_PATTERNS`)
+are looser stems/phrases - `arriv*`, `got/get/made it to work`, `at work` for
+arrive_work; `leav*`, `left`, `goodbye`, `bye` for leave_work; `wake*`,
+`woke`, `awake` for wake; `sleep*`, `bed*` for sleep. Word-boundary-anchored
+the same way the instant list is, so "leftovers" still doesn't false-positive
+as leave_work. If a message's text matches keywords from **more than one**
+category, `_categorize_backfill` treats it as ambiguous and returns no match
+(fails safe to "didn't understand" rather than guessing wrong) - this is a
+known/accepted limitation for oddly-phrased messages, not a bug to silently
+"fix" by picking one.
 
 ## Key conventions
 

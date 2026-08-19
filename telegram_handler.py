@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from config import Config
 from database import Event, SessionLocal
-from message_parser import CATEGORY_LABELS, categorize
+from message_parser import CATEGORY_LABELS, categorize, parse_backfill
 from stats import RANGE_DAYS, all_category_stats, build_days_table
 
 RANGE_ORDER = ["week", "month", "quarter", "year"]
@@ -36,11 +36,16 @@ class TelegramHandler:
             f"Your Telegram ID: {user_id}\n\n"
             f"Add this to your .env file as TELEGRAM_USER_ID so only you "
             f"can log events, then restart the bot.\n\n"
-            f"Just message me naturally to log an event:\n"
+            f"Message me naturally to log an event right now:\n"
             f"  \U0001F305 Wake up: Goodmorning / Awake / I'm awake\n"
             f"  \U0001F3E2 Arrive at work: At work / Arrived at work / Arrived\n"
             f"  \U0001F6AA Leave work: Leaving / Left / Leaving work / Left work / Goodbye / Bye work\n"
             f"  \U0001F319 Bedtime: Goodnight / Bedtime / Going to sleep / Sleeping\n\n"
+            f"Forgot to log something in the moment? Backfill it with a "
+            f"time and I'll log it for that time instead of now:\n"
+            f"  • I arrived to work at 9:00 AM yesterday\n"
+            f"  • I went to sleep at 11:00 PM last night\n"
+            f"  • I got to work at 8:30 AM this morning\n\n"
             f"Commands:\n"
             f"  /stats - View your averages, earliest and latest for each category\n"
             f"  /help - Show this message"
@@ -83,6 +88,15 @@ class TelegramHandler:
         await update.message.reply_text("\n".join(lines).strip())
 
     @staticmethod
+    def _log_event(category: str, timestamp, raw_message: str) -> None:
+        db = SessionLocal()
+        try:
+            db.add(Event(category=category, timestamp=timestamp, raw_message=raw_message))
+            db.commit()
+        finally:
+            db.close()
+
+    @staticmethod
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not TelegramHandler._is_authorized(update):
             await update.message.reply_text(
@@ -91,23 +105,31 @@ class TelegramHandler:
             return
 
         text = update.message.text or ""
-        category = categorize(text)
 
-        if category is None:
+        category = categorize(text)
+        if category is not None:
+            timestamp = Config.now()
+            TelegramHandler._log_event(category, timestamp, text)
+            label = CATEGORY_LABELS[category]
             await update.message.reply_text(
-                "I didn't recognize that as a wake/arrive/leave/sleep message. "
-                "Send /help to see the phrases I understand."
+                f"Logged: {label} at {timestamp.strftime('%I:%M %p').lstrip('0')}"
             )
             return
 
-        db = SessionLocal()
-        try:
-            event = Event(category=category, timestamp=Config.now(), raw_message=text)
-            db.add(event)
-            db.commit()
-            logged_at = event.timestamp
-        finally:
-            db.close()
+        backfill = parse_backfill(text, Config.now())
+        if backfill is not None:
+            category, timestamp = backfill
+            TelegramHandler._log_event(category, timestamp, text)
+            label = CATEGORY_LABELS[category]
+            await update.message.reply_text(
+                f"Logged (backfilled): {label} at "
+                f"{timestamp.strftime('%I:%M %p').lstrip('0')} on "
+                f"{timestamp.strftime('%A, %b %-d')}"
+            )
+            return
 
-        label = CATEGORY_LABELS[category]
-        await update.message.reply_text(f"Logged: {label} at {logged_at.strftime('%I:%M %p').lstrip('0')}")
+        await update.message.reply_text(
+            "I didn't recognize that as a wake/arrive/leave/sleep message. "
+            "Send /help to see the phrases I understand, or backfill one "
+            "with a time, e.g. \"I arrived to work at 9:00 AM yesterday\"."
+        )
