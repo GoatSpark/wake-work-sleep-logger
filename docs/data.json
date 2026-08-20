@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-20T09:18:31.309050",
+  "generated_at": "2026-08-20T09:34:31.306290",
   "timezone": "America/Los_Angeles",
   "categories": [
     "wake",
@@ -27,7 +27,8 @@
     },
     {
       "date": "2026-08-20",
-      "sleep": 50
+      "sleep": 50,
+      "wake": 561
     }
   ]
 }
